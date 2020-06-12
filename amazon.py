@@ -1,3 +1,5 @@
+# lpr -P a resources/amazon/1ps.pdf;  lpr -P a resources/amazon/1sl.pdf
+
 import utilities as u
 import datetime
 import time
@@ -22,22 +24,22 @@ from watchdog.observers import Observer
 ###############################################################################################
 # Script Options:
 
-PRINT_TO_PHYSICAL_PRINTER           = False
+PRINT_TO_PHYSICAL_PRINTER           = True
+USE_LOG_FILE                        = True # if False, print log to the the stdout which is the terminal usually
+LOG_FILE_PATH                       = os.getcwd() + os.sep + __file__ + ".log"
 AMAZON_VP_DESTINATION_FOLDER        = os.getcwd() + os.sep + "amazon_virtual_printer_target/"
 SPLIT_PS_PDF_TARGET                 = os.getcwd() + os.sep + "split_ps_pdf_target/"
 SPLIT_SL_PDF_TARGET                 = os.getcwd() + os.sep + "split_sl_pdf_target/"
 COMBINED_IMGS_TARGET                = os.getcwd() + os.sep + "combined_pages/"
-WAIT_TIME_FOR_2ND_PDF               = 15 # in seconds
+WAIT_TIME_FOR_2ND_PDF               = 30 # in seconds
 
 # not implemented for now:
-# USE_LOG_FILE                        = False # if False, print log to the the stdout which is the terminal usually
-# LOG_FILE_PATH                       = os.getcwd() + os.sep + __file__ + ".log"
 # WAIT_TIME_DUE_TO_VP_SAVING_THE_FILE = 1  # in seconds
 ###############################################################################################
 
 
-# if USE_LOG_FILE:
-#     sys.stdout = open(LOG_FILE_PATH, "at")
+if USE_LOG_FILE:
+    sys.stdout = open(LOG_FILE_PATH, "at")
 
 
 ready_text = ": Ready to receive a new amazon pdf-pair...\n"
@@ -70,7 +72,7 @@ class AmazonWatcher:
             print(u.timestamp() + ": Closing all threads, please wait...", flush=True)
             self.observer.stop()
             self.observer.join()
-            print(u.timestamp() + ": Done")
+            print(u.timestamp() + ": Done", flush=True)
         except:
             print(u.timestamp() + ": An error occured while running: " + __file__, flush=True)
             u.display_alert(r"An error occured while running: " + __file__, blocking=False)
@@ -128,7 +130,7 @@ class AmazonPDFHandler(FileSystemEventHandler):
         orders_info = u.get_orders_info(ps_path_from_page_num, sl_path_from_page_num)
         
         for order in orders_info.values():
-            u.paste_barcodes(
+            u.paste_barcodes_on_ps(
                 order["order_id"],
                 order["tracking_number"],
                 order["ps_path"]
@@ -144,14 +146,15 @@ class AmazonPDFHandler(FileSystemEventHandler):
             u.print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
             u.print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
         
-        print(u.timestamp() + ": done")
+        print(u.timestamp() + ": Amazon print job completed", flush=True)
+        print("\n" + u.timestamp() + ready_text, flush=True)
 
         
 if __name__ == '__main__':
-    print("\n\n" + u.timestamp() + ": " + __file__ + " started")
+    print("\n\n" + u.timestamp() + ": " + __file__ + " started", flush=True)
 
     # ensure '/' at the end of path string:
-    AMAZON_VP_DESTINATION_FOLDER = AMAZON_VP_DESTINATION_FOLDER + ("" if AMAZON_VP_DESTINATION_FOLDER[-1] == "/" else "/")
+    u.append_forward_slash_if_needed(AMAZON_VP_DESTINATION_FOLDER)
         
     w = AmazonWatcher()
     w.start()

@@ -19,19 +19,24 @@ OID_LOOKS_LIKE_THIS = r"(\s*\d){3}-(\s*\d){7}-(\s*\d){7}"
 
 
 def print_to_PP(path_to_file_to_print, for_real=False):
-    # PP means Plain Paper, the print media in Tray1 of the printer
+    '''
+    PP means Plain Paper, the print media in Tray1 of the printer
+    '''
 
     if for_real:
         os.system(r"lpr -P " + physical_printer_name + " -o BRInputSlot=Tray1 " + path_to_file_to_print)
+    
     print("Sending print job to PP/Tray1 done: " + path_to_file_to_print, flush=True)
 
 
 def print_to_LL(path_to_file_to_print, for_real=True):
-    # LL means Laser Labels, the print media in Tray2 of the printer
-
+    '''
+    LL means Laser Labels, the print media in Tray2 of the printer
+    '''
 
     if for_real:
         os.system(r"lpr -P " + physical_printer_name + " -o BRInputSlot=Tray2 " + path_to_file_to_print)
+    
     print("Sending print job to LL/Tray2 done: " + path_to_file_to_print, flush=True)
 
 
@@ -94,7 +99,8 @@ def pdf_to_images(path_to_pdf, output_dir):
     page3_path   = pages_of_pdf[3]  # this was the reason a dict was used instead of a list
     ...and so on
     '''
-
+    
+    print(timestamp() + ": Started converting pdf to images.\nPDF: " + path_to_pdf + "\nTO: " + output_dir, flush=True)
 
     list_of_paths_to_all_pages = convert_from_path(
         pdf_path=path_to_pdf, 
@@ -110,6 +116,9 @@ def pdf_to_images(path_to_pdf, output_dir):
 
     for i in range(len(list_of_paths_to_all_pages)):
         dict_of_paths_to_all_pages[i+1] = list_of_paths_to_all_pages[i]
+
+
+    print(timestamp() + ": Done converting pdf to images.", flush=True)
 
     return dict_of_paths_to_all_pages
 
@@ -128,10 +137,8 @@ def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
     #   
     #   order_num is a lot like page_num, it can be used to retrieve 
     #   the details about an order from the dict this function returns.
-
-
     
-
+    print(timestamp() + ": Extracting order_IDs and tracking_numbers from files. Determining PS-SL matches.", flush=True)
 
     def k_from_v(src_dict, v_to_find):
         for k, v in src_dict.items():
@@ -162,6 +169,8 @@ def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
             "order_id": ps_oid, 
             "tracking_number": sl_tnum
         }
+
+    print(timestamp() + ": Done", flush=True)
 
     return result
 
@@ -217,20 +226,6 @@ def oids_and_tnums_from_sl_pages(sl_path_from_page_num):
     for i in range(len(oid_pages)):
         sl_path_from_page_num.pop(total_page_count - i)
         all_pages.pop()
-
-
-    # print("#################################################################################")
-    # for i in oid_pages:
-    #     print(i, "\n-------------------------------------------")
-
-    # for i in oids:
-    #     print(i, "\n===========================================")
-    
-    # if len(all_pages) != len(oids):
-    #     print(str(len(all_pages)) + ", " + str(len(oids))) # 34, 30
-    # else:
-    #     print(r"something bad didn't happen")
-    # print("#################################################################################")
 
     result1 = dict()
     result2 = dict()
@@ -432,13 +427,16 @@ result_path=None
     f2.close()
 
 
-def paste_barcodes(oid, tnum, on, result=None):
+def paste_barcodes_on_ps(oid, tnum, on, result=None):
     '''
     oid          : the  oid from which to generate the upper-right barcode 
     tnum         : the tnum from which to generate the   bottom    barcode 
     on           : the path to the image on which the generated barcode will be pasted
     result       : the path to the new image, if None the source image will be overwritten
     '''
+
+    print(timestamp() + ": Pasting barcodes for oid: " + str(oid) + " and tnum: " + str(tnum) + " on: " + str(on), flush=True)
+
     oid_pos  = (1050,40)
     oid_scale_by = 1
     
@@ -465,6 +463,8 @@ def paste_barcodes(oid, tnum, on, result=None):
     os.remove(oid_barcode)
     os.remove(tnum_barcode)
 
+    print(timestamp() + ": Done", flush=True)
+
 def empty_or_make_new(dir_path):
     '''
     creates a new at dir_path if it doesn't exist, empties it otherwise, you 
@@ -473,8 +473,10 @@ def empty_or_make_new(dir_path):
 
     if os.path.exists(dir_path) and os.path.isdir(dir_path):
         empty_dir(dir_path)
+        print(timestamp() + ": Emptied dir at: " + dir_path, flush=True)
     else:
         os.mkdir(dir_path)
+        print(timestamp() + ": Made dir at: " + dir_path, flush=True)
 
 
 def combine_ps_and_sl(ps_path, sl_path, output):
@@ -483,6 +485,8 @@ def combine_ps_and_sl(ps_path, sl_path, output):
     left half of it and the image at `sl_path` on the right half of it
     '''
     
+    print(timestamp() + ": Making a single page \nfrom: " + ps_path + " \nand: " + sl_path + " \nat: " + output, flush=True)
+
     IMG2_HORIZONTAL_OFFSET = 50
     
     ps = Image.open(ps_path) # 1700 x 2200
@@ -504,4 +508,4 @@ def combine_ps_and_sl(ps_path, sl_path, output):
     sl.close()
     canvas.close()
 
-    
+    print(timestamp() + ": Done", flush=True)
