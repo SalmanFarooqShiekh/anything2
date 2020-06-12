@@ -1,3 +1,4 @@
+# `brew install poppler`, it's a dependency of PyPDF2
 pathtools==0.1.2
 pdf2image==1.13.1
 Pillow==7.1.2
