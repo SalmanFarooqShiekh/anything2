@@ -146,6 +146,9 @@ class AmazonPDFHandler(FileSystemEventHandler):
             u.print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
             u.print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
         
+        
+        u.empty_dir(AMAZON_VP_DESTINATION_FOLDER)
+
         print(u.timestamp() + ": Amazon print job completed", flush=True)
         print("\n" + u.timestamp() + ready_text, flush=True)
 
