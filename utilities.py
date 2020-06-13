@@ -17,6 +17,50 @@ physical_printer_name = r"Ecomm_Fulfillment___Inventory_Cage" # as determined fr
 # "112-3331 456-7378648"
 OID_LOOKS_LIKE_THIS = r"(\s*\d){3}-(\s*\d){7}-(\s*\d){7}"
 
+###############################################################################################
+# Script Options:
+
+PRINT_TO_PHYSICAL_PRINTER           = True
+SPLIT_PS_PDF_TARGET                 = os.getcwd() + os.sep + "split_ps_pdf_target/"
+SPLIT_SL_PDF_TARGET                 = os.getcwd() + os.sep + "split_sl_pdf_target/"
+COMBINED_IMGS_TARGET                = os.getcwd() + os.sep + "combined_pages/"
+###############################################################################################
+
+
+def do_amazon_print_job(ps_pdf_path, sl_pdf_path):
+    print(u.timestamp() + ": Proccessing: \n'" + ps_pdf_path + "' \nand \n'" + sl_pdf_path + "'", flush=True)
+
+    u.empty_or_make_new(SPLIT_PS_PDF_TARGET)    
+    u.empty_or_make_new(SPLIT_SL_PDF_TARGET)
+    u.empty_or_make_new(COMBINED_IMGS_TARGET)
+
+    ps_path_from_page_num = u.pdf_to_images(ps_pdf_path, SPLIT_PS_PDF_TARGET)
+    sl_path_from_page_num = u.pdf_to_images(sl_pdf_path, SPLIT_SL_PDF_TARGET)
+
+    orders_info = u.get_orders_info(ps_path_from_page_num, sl_path_from_page_num)
+    
+    for order in orders_info.values():
+        u.paste_barcodes_on_ps(
+            order["order_id"],
+            order["tracking_number"],
+            order["ps_path"]
+        )
+        
+    for order in orders_info.values():
+        combined_ps_and_sl_path = u.append_forward_slash_if_needed(COMBINED_IMGS_TARGET) + order["order_id"] + ".png"
+        u.combine_ps_and_sl(order["ps_path"], order["sl_path"], combined_ps_and_sl_path)
+        order["combined_ps_and_sl_path"] = combined_ps_and_sl_path
+
+    
+    for order in orders_info.values():
+        u.print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
+        u.print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
+    
+    
+
+    print(u.timestamp() + ": Amazon print job completed", flush=True)
+    print("\n" + u.timestamp() + ready_text, flush=True)
+
 
 def print_to_PP(path_to_file_to_print, for_real=False):
     '''

@@ -24,17 +24,10 @@ from watchdog.observers import Observer
 ###############################################################################################
 # Script Options:
 
-PRINT_TO_PHYSICAL_PRINTER           = True
 USE_LOG_FILE                        = True # if False, print log to the the stdout which is the terminal usually
 LOG_FILE_PATH                       = os.getcwd() + os.sep + __file__ + ".log"
 AMAZON_VP_DESTINATION_FOLDER        = os.getcwd() + os.sep + "amazon_virtual_printer_target/"
-SPLIT_PS_PDF_TARGET                 = os.getcwd() + os.sep + "split_ps_pdf_target/"
-SPLIT_SL_PDF_TARGET                 = os.getcwd() + os.sep + "split_sl_pdf_target/"
-COMBINED_IMGS_TARGET                = os.getcwd() + os.sep + "combined_pages/"
 WAIT_TIME_FOR_2ND_PDF               = 30 # in seconds
-
-# not implemented for now:
-# WAIT_TIME_DUE_TO_VP_SAVING_THE_FILE = 1  # in seconds
 ###############################################################################################
 
 
@@ -98,7 +91,7 @@ class AmazonPDFHandler(FileSystemEventHandler):
 
             if seconds_since_epoch - AmazonPDFHandler.ps_pdf_receive_time <= WAIT_TIME_FOR_2ND_PDF: # the 2nd pdf came under time, treat it as the sl_pdf
                 sl_pdf_path = path_to_source_pdf
-                AmazonPDFHandler.process_ps_and_sl(AmazonPDFHandler.ps_pdf_path, sl_pdf_path)
+                u.do_amazon_print_job(AmazonPDFHandler.ps_pdf_path, sl_pdf_path)
                 u.empty_dir(AMAZON_VP_DESTINATION_FOLDER)
             else: # the 2nd pdf did NOT come under time, treat the 2nd pdf as ps_pdf and delete everything else
                 # delete everything but the pdf just received:
@@ -114,43 +107,6 @@ class AmazonPDFHandler(FileSystemEventHandler):
             msg = msg + " Please try again after deleting all contents of: '" 
             msg = msg + AMAZON_VP_DESTINATION_FOLDER + "' (do not delete the folder itself)"
             u.display_alert(msg, blocking=True)
-
-
-    @staticmethod
-    def process_ps_and_sl(ps_pdf_path, sl_pdf_path):
-        print(u.timestamp() + ": Proccessing: \n'" + ps_pdf_path + "' \nand \n'" + sl_pdf_path + "'", flush=True)
-
-        u.empty_or_make_new(SPLIT_PS_PDF_TARGET)    
-        u.empty_or_make_new(SPLIT_SL_PDF_TARGET)
-        u.empty_or_make_new(COMBINED_IMGS_TARGET)
-
-        ps_path_from_page_num = u.pdf_to_images(ps_pdf_path, SPLIT_PS_PDF_TARGET)
-        sl_path_from_page_num = u.pdf_to_images(sl_pdf_path, SPLIT_SL_PDF_TARGET)
-
-        orders_info = u.get_orders_info(ps_path_from_page_num, sl_path_from_page_num)
-        
-        for order in orders_info.values():
-            u.paste_barcodes_on_ps(
-                order["order_id"],
-                order["tracking_number"],
-                order["ps_path"]
-            )
-            
-        for order in orders_info.values():
-            combined_ps_and_sl_path = u.append_forward_slash_if_needed(COMBINED_IMGS_TARGET) + order["order_id"] + ".png"
-            u.combine_ps_and_sl(order["ps_path"], order["sl_path"], combined_ps_and_sl_path)
-            order["combined_ps_and_sl_path"] = combined_ps_and_sl_path
-
-        
-        for order in orders_info.values():
-            u.print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
-            u.print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
-        
-        
-        u.empty_dir(AMAZON_VP_DESTINATION_FOLDER)
-
-        print(u.timestamp() + ": Amazon print job completed", flush=True)
-        print("\n" + u.timestamp() + ready_text, flush=True)
 
         
 if __name__ == '__main__':
