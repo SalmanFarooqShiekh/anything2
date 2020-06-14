@@ -1,4 +1,6 @@
 # `brew install poppler`, it's a dependency of PyPDF2
+# install pdftoppm and include it in path
+# `brew install tesseract`
 pathtools==0.1.2
 pdf2image==1.13.1
 Pillow==7.1.2

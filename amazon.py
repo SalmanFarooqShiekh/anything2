@@ -24,10 +24,10 @@ from watchdog.observers import Observer
 ###############################################################################################
 # Script Options:
 
-USE_LOG_FILE                        = True # if False, print log to the the stdout which is the terminal usually
+USE_LOG_FILE                        = False # if False, print log to the the stdout which is the terminal usually
 LOG_FILE_PATH                       = os.getcwd() + os.sep + __file__ + ".log"
-AMAZON_VP_DESTINATION_FOLDER        = os.getcwd() + os.sep + "amazon_virtual_printer_target/"
-WAIT_TIME_FOR_2ND_PDF               = 30 # in seconds
+AMAZON_VP_DESTINATION_FOLDER        = os.getcwd() + os.sep + "amazon_virtual_printer_target/"  # '/' at the end is important
+WAIT_TIME_FOR_2ND_PDF               = 180 # in seconds
 ###############################################################################################
 
 
@@ -35,7 +35,7 @@ if USE_LOG_FILE:
     sys.stdout = open(LOG_FILE_PATH, "at")
 
 
-ready_text = ": Ready to receive a new amazon pdf-pair...\n"
+
 class AmazonWatcher:
     def __init__(self):
         self.observer = Observer()
@@ -51,7 +51,7 @@ class AmazonWatcher:
 
         self.observer.schedule(AmazonPDFHandler(), AMAZON_VP_DESTINATION_FOLDER)
         self.observer.start()
-        print("\n" + u.timestamp() + ready_text, flush=True)
+        print("\n" + u.timestamp() + ": Ready to receive a new amazon pdf-pair...\n", flush=True)
 
         # The observer will keep observing in its own thread.
         # We are artificially keepthing this main thread alive 
@@ -92,7 +92,7 @@ class AmazonPDFHandler(FileSystemEventHandler):
             if seconds_since_epoch - AmazonPDFHandler.ps_pdf_receive_time <= WAIT_TIME_FOR_2ND_PDF: # the 2nd pdf came under time, treat it as the sl_pdf
                 sl_pdf_path = path_to_source_pdf
                 u.do_amazon_print_job(AmazonPDFHandler.ps_pdf_path, sl_pdf_path)
-                u.empty_dir(AMAZON_VP_DESTINATION_FOLDER)
+                u.empty_or_make_new(AMAZON_VP_DESTINATION_FOLDER)
             else: # the 2nd pdf did NOT come under time, treat the 2nd pdf as ps_pdf and delete everything else
                 # delete everything but the pdf just received:
                 dir_items = glob.glob(AMAZON_VP_DESTINATION_FOLDER + "*")
@@ -103,17 +103,12 @@ class AmazonPDFHandler(FileSystemEventHandler):
                 AmazonPDFHandler.ps_pdf_path = path_to_source_pdf  # treat it as the first pdf/ps_pdf of the complete pair
                 AmazonPDFHandler.ps_pdf_receive_time = time.time() # seconds since epoch
         else:
-            msg = "Something unexpected happened." 
-            msg = msg + " Please try again after deleting all contents of: '" 
-            msg = msg + AMAZON_VP_DESTINATION_FOLDER + "' (do not delete the folder itself)"
-            u.display_alert(msg, blocking=True)
+            print(u.timestamp() + ": Something unexpected happened. Cleaning " + AMAZON_VP_DESTINATION_FOLDER, flush=True)
+            u.empty_dir(AMAZON_VP_DESTINATION_FOLDER)
 
         
 if __name__ == '__main__':
     print("\n\n" + u.timestamp() + ": " + __file__ + " started", flush=True)
-
-    # ensure '/' at the end of path string:
-    u.append_forward_slash_if_needed(AMAZON_VP_DESTINATION_FOLDER)
-        
+    
     w = AmazonWatcher()
     w.start()

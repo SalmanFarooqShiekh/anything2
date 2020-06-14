@@ -2,64 +2,78 @@ from pytesseract import image_to_string
 from pdf2image import convert_from_path
 from PyPDF2 import PdfFileWriter, PdfFileReader
 from PIL import Image 
-import barcode
 import datetime
+import barcode
+import random
 import glob
 import time
 import re
 import os
 
-physical_printer_name = r"Ecomm_Fulfillment___Inventory_Cage" # as determined from running 'lpstat -a' in the terminal
-
-# sample wanted matches: 
-# "111-4979156-8561 860"
-# "112-6411059-1101064"
-# "112-3331 456-7378648"
-OID_LOOKS_LIKE_THIS = r"(\s*\d){3}-(\s*\d){7}-(\s*\d){7}"
-
 ###############################################################################################
 # Script Options:
 
-PRINT_TO_PHYSICAL_PRINTER           = True
+PRINT_TO_PHYSICAL_PRINTER           = False
+PRINT_TO_VIRTUAL_PRINTER            = True
+PHYSICAL_PRINTER_NAME               = "Ecomm_Fulfillment___Inventory_Cage" # as determined from running 'lpstat -a' in the terminal
+VIRTUAL_PRINTER_NAME                = "q"
 SPLIT_PS_PDF_TARGET                 = os.getcwd() + os.sep + "split_ps_pdf_target/"
 SPLIT_SL_PDF_TARGET                 = os.getcwd() + os.sep + "split_sl_pdf_target/"
 COMBINED_IMGS_TARGET                = os.getcwd() + os.sep + "combined_pages/"
 ###############################################################################################
 
 
-def do_amazon_print_job(ps_pdf_path, sl_pdf_path):
-    print(u.timestamp() + ": Proccessing: \n'" + ps_pdf_path + "' \nand \n'" + sl_pdf_path + "'", flush=True)
+# sample wanted matches: 
+# "111-4979156-8561 860"
+# "112-6411059-1101064"
+# "112-3331 456-7378648"
+OID_LOOKS_LIKE_THIS   = r"(\s*\d){3}-(\s*\d){7}-(\s*\d){7}"
+PS_PAGES_MATCH_THIS = r"[Oo][Rr][Dd][Ee][Rr][\s]*[Ii][Dd]:[\s]*" + OID_LOOKS_LIKE_THIS
 
-    u.empty_or_make_new(SPLIT_PS_PDF_TARGET)    
-    u.empty_or_make_new(SPLIT_SL_PDF_TARGET)
-    u.empty_or_make_new(COMBINED_IMGS_TARGET)
 
-    ps_path_from_page_num = u.pdf_to_images(ps_pdf_path, SPLIT_PS_PDF_TARGET)
-    sl_path_from_page_num = u.pdf_to_images(sl_pdf_path, SPLIT_SL_PDF_TARGET)
+def is_ps_page(a_page):
+    img_text = image_to_string(Image.open(a_page))
+    match = re.search(PS_PAGES_MATCH_THIS, img_text)
 
-    orders_info = u.get_orders_info(ps_path_from_page_num, sl_path_from_page_num)
+    return bool(match)
+
+
+def do_amazon_print_job(pdfA, pdfB):
+    print(timestamp() + ": Proccessing: \n>'" + pdfA + "' \nand \n> '" + pdfB + "'", flush=True)
+
+    empty_or_make_new(SPLIT_PS_PDF_TARGET)    
+    empty_or_make_new(SPLIT_SL_PDF_TARGET)
+    empty_or_make_new(COMBINED_IMGS_TARGET)
+
+    pdfA_path_from_page_num = pdf_to_images2(pdfA, SPLIT_PS_PDF_TARGET)
+    pdfB_path_from_page_num = pdf_to_images2(pdfB, SPLIT_SL_PDF_TARGET)
+
+    first_page_of_pdfA = pdfA_path_from_page_num[1]
+    if is_ps_page(first_page_of_pdfA):
+        ps_path_from_page_num = pdfA_path_from_page_num
+        sl_path_from_page_num = pdfB_path_from_page_num
+    else:
+        ps_path_from_page_num = pdfB_path_from_page_num
+        sl_path_from_page_num = pdfA_path_from_page_num
+
+
+    orders_info = get_orders_info(ps_path_from_page_num, sl_path_from_page_num)
     
     for order in orders_info.values():
-        u.paste_barcodes_on_ps(
-            order["order_id"],
-            order["tracking_number"],
-            order["ps_path"]
-        )
-        
+        paste_barcodes_on_ps(order["order_id"], order["tracking_number"], order["ps_path"])
+
     for order in orders_info.values():
-        combined_ps_and_sl_path = u.append_forward_slash_if_needed(COMBINED_IMGS_TARGET) + order["order_id"] + ".png"
-        u.combine_ps_and_sl(order["ps_path"], order["sl_path"], combined_ps_and_sl_path)
+        combined_ps_and_sl_path = append_forward_slash_if_needed(COMBINED_IMGS_TARGET) + order["order_id"] + ".png"
+        combine_ps_and_sl(order["ps_path"], order["sl_path"], combined_ps_and_sl_path)
         order["combined_ps_and_sl_path"] = combined_ps_and_sl_path
 
+    for page_num in sorted(orders_info.keys()):
+        order = orders_info[page_num]
+        print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
+        print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
     
-    for order in orders_info.values():
-        u.print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
-        u.print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
-    
-    
-
-    print(u.timestamp() + ": Amazon print job completed", flush=True)
-    print("\n" + u.timestamp() + ready_text, flush=True)
+    print(timestamp() + ": Amazon print job completed", flush=True)
+    print("\n" + timestamp() + ": Ready to receive a new amazon pdf-pair...\n", flush=True)
 
 
 def print_to_PP(path_to_file_to_print, for_real=False):
@@ -68,7 +82,10 @@ def print_to_PP(path_to_file_to_print, for_real=False):
     '''
 
     if for_real:
-        os.system(r"lpr -P " + physical_printer_name + " -o BRInputSlot=Tray1 " + path_to_file_to_print)
+        os.system(r"lpr -P " + PHYSICAL_PRINTER_NAME + " -o BRInputSlot=Tray1 " + path_to_file_to_print)
+    
+    if PRINT_TO_VIRTUAL_PRINTER:
+        os.system(r"lpr -P " + VIRTUAL_PRINTER_NAME + " " + path_to_file_to_print)
     
     print("Sending print job to PP/Tray1 done: " + path_to_file_to_print, flush=True)
 
@@ -79,7 +96,10 @@ def print_to_LL(path_to_file_to_print, for_real=True):
     '''
 
     if for_real:
-        os.system(r"lpr -P " + physical_printer_name + " -o BRInputSlot=Tray2 " + path_to_file_to_print)
+        os.system(r"lpr -P " + PHYSICAL_PRINTER_NAME + " -o BRInputSlot=Tray2 " + path_to_file_to_print)
+    
+    if PRINT_TO_VIRTUAL_PRINTER:
+        os.system(r"lpr -P " + VIRTUAL_PRINTER_NAME + " " + path_to_file_to_print)
     
     print("Sending print job to LL/Tray2 done: " + path_to_file_to_print, flush=True)
 
@@ -137,7 +157,7 @@ def pdf_to_images(path_to_pdf, output_dir):
     in the dict are relative to os.getcwd().
     
     Example Usage: 
-    pages_of_pdf = pdf_to_pages(r"path/to/your.pdf")
+    pages_of_pdf = pdf_to_images(r"path/to/your.pdf")
     page1_path   = pages_of_pdf[1]  # note that indexing of the dict starts from 1 to
     page2_path   = pages_of_pdf[2]  # match with indexing of page numbers of the pdf,
     page3_path   = pages_of_pdf[3]  # this was the reason a dict was used instead of a list
@@ -167,6 +187,50 @@ def pdf_to_images(path_to_pdf, output_dir):
     return dict_of_paths_to_all_pages
 
 
+def pdf_to_images2(path_to_pdf, output_dir):
+    '''
+    functionally identical to pdf_to_images(), the difference is just 
+    that the dependency is of pdftoppm instead of pdf2image
+    '''
+
+    print(timestamp() + ": Started converting pdf to images.\nPDF: " + path_to_pdf + "\nTO: " + output_dir, flush=True)
+
+    file_name = str(random.randint(1, 999999999999999999999999999999999))
+    
+    output_dir = append_forward_slash_if_needed(output_dir)
+    command = "pdftoppm -r 200 -png " + path_to_pdf + " " + output_dir + file_name
+    os.system(command)
+    
+    # when `file_name` = "x"
+    # Output images by pdftoppm will be: 
+    #       x-1.png (page_1)
+    #       x-2.png (page_2)
+    #       x-3.png (page_3)
+    #       x-4.png (page_4)
+    #       x-5.png (page_5)
+    #       ... and so on.
+    # 
+    # (for help: consult man pages for pdftoppm)
+
+    dict_of_paths_to_all_pages = dict() 
+
+    files = glob.glob(output_dir + file_name + "*")
+    for file_path in files: 
+        match = re.search(r"-\d+\.png$", file_path)
+
+        if match:
+            matched_string = file_path[ match.start() : match.end() ]
+            
+            m = re.search(r"\d+", matched_string)
+            page_num = int(matched_string[ m.start() : m.end() ])
+            
+            dict_of_paths_to_all_pages[page_num] = file_path
+
+    print(timestamp() + ": Done converting pdf to images.", flush=True)
+
+    return dict_of_paths_to_all_pages
+
+
 def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
     # params:
     #   sl_path_from_page_num: a dict: page_num -> page_img_path
@@ -182,15 +246,7 @@ def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
     #   order_num is a lot like page_num, it can be used to retrieve 
     #   the details about an order from the dict this function returns.
     
-    print(timestamp() + ": Extracting order_IDs and tracking_numbers from files. Determining PS-SL matches.", flush=True)
-
-    def k_from_v(src_dict, v_to_find):
-        for k, v in src_dict.items():
-            if v == v_to_find:
-                return k
-
-        raise ValueError()
-
+    print(timestamp() + ": Determining PS-SL matches.", flush=True)
 
     sl_oids_and_tnums = oids_and_tnums_from_sl_pages(sl_path_from_page_num)
 
@@ -203,7 +259,7 @@ def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
     ps_page_nums = ps_oids.keys() 
     
     result = dict()
-    for ps_page_num in ps_page_nums:
+    for ps_page_num in sorted(ps_page_nums):
         ps_oid = ps_oids[ps_page_num]
         matching_sl_page_num = k_from_v(sl_oids, ps_oid)
         sl_tnum = sl_tnums[matching_sl_page_num]
@@ -214,25 +270,38 @@ def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
             "tracking_number": sl_tnum
         }
 
-    print(timestamp() + ": Done", flush=True)
+        msg = ": PS-SL match " + str(ps_page_num) + " details:\n" + "\n".join("> "+str(i) for i in result[ps_page_num].items())
+        print(timestamp() + msg, flush=True)    
+
+    print(timestamp() + ": Above PS-SL matches determined.", flush=True)
 
     return result
 
 
-def extract_oid_from_ps_img(ps_img_path):
-    # extracts the order_id (oid) from the given packing_slip through OCR
+def k_from_v(src_dict, v_to_find):
+    for k, v in src_dict.items():
+        if v == v_to_find:
+            return k
 
+    raise ValueError("could not find the given value in the given dict")
+
+
+def extract_oid_from_ps_img(ps_img_path):
+    '''
+    extracts the order_id (oid) from the given packing_slip through OCR
+    '''
 
     img_text = image_to_string(Image.open(ps_img_path))
 
     # desired sample match: "Order ID: 113-2705349-0340212"
-    pattern = r"[Oo][Rr][Dd][Ee][Rr][\s]*[Ii][Dd]:[\s]*" + OID_LOOKS_LIKE_THIS
+    pattern = PS_PAGES_MATCH_THIS
     match = re.search(pattern, img_text)
     order_id_string = img_text[ match.start() : match.end() ]
     # order_id_string = order_id_string.replace("-", "")
     order_id_string = order_id_string[-19:]
     # order_id_number = int(order_id_string)
     
+    print(timestamp() + ": Extracted an order_ID from a PS: " + order_id_string, flush=True)
     return order_id_string
 
 
@@ -260,6 +329,8 @@ def oids_and_tnums_from_sl_pages(sl_path_from_page_num):
     # 1st one is a dict() with a mapping from the page_number to the order_id of shipping_labels.
     # 2nd one is a dict() with a mapping from the page_number to the tracking_number of shipping_labels.
     # note: page_numbers start at 1
+
+    print(timestamp() + ": Extracting order_IDs and tracking_numbers from SL's.", flush=True)
 
     all_pages = all_pages_text(sl_path_from_page_num)
     oid_pages = extract_oid_pages_text_from_sl_pages(all_pages)
@@ -298,20 +369,20 @@ def extract_tnum_from_sl_text(sl_page_text):
         tnum_string = sl_page_text[ match1.start() : match1.end() ]
         tnum_string = "".join(re.split(r"\s+", tnum_string)) # removes all whitespace matched by \s
         tnum_string = tnum_string[-12:]
-        return tnum_string
     elif match2:
         tnum_string = sl_page_text[ match2.start() : match2.end() ]
         tnum_string = "".join(re.split(r"\s+", tnum_string)) # removes all whitespace matched by \s
         tnum_string = tnum_string[-18:]
         tnum_string = tnum_string.replace("1ZO9A", "1Z09A")
-        return tnum_string
     elif match3:
         tnum_string = sl_page_text[ match3.start() : match3.end() ]
         m = re.search(pattern=r"(\s*\d){22}", string=tnum_string)
         tnum_string = tnum_string[ m.start() : m.end() ] 
         tnum_string = "".join(re.split(r"\s+", tnum_string)) # removes all whitespace matched by \s
-        return tnum_string
         
+    
+    print(timestamp() + ": Extracted a tnum from an SL: " + tnum_string, flush=True)
+    return tnum_string    
     
     raise Exception("Couldn't extract the tracking number from the following shipping label: \
                     \n--------------------\n" + sl_page_text + "\n--------------------\n")
@@ -360,6 +431,7 @@ def extract_oids_from_sl_oid_pages(oid_page_text_list):
     # returns: extracts the "orderID"s from all the text in the oid_page_text_list 
     # and returns a list of "orderID" ints
 
+    print(timestamp() + ": Extracting order_ID's from SL's.", flush=True)
 
     result = list()
     for oid_page_text in oid_page_text_list:
@@ -369,12 +441,13 @@ def extract_oids_from_sl_oid_pages(oid_page_text_list):
             oid_str = oid_str.replace(" ", "")
             result.append(oid_str)
 
+    print(timestamp() + ": Done. Extracted order_ID's from SL's:\n> " + "\n> ".join(result), flush=True)
+
     return result
 
 
 def empty_dir(dir_path):
     # deletes all contents of the given directory
-
 
     dir_path = append_forward_slash_if_needed(dir_path)
     files = glob.glob(dir_path + "*")
@@ -396,8 +469,7 @@ def display_alert(msg, blocking):
 def timestamp():
     # returns a timestamp of the current local time as a string
 
-
-    return datetime.datetime.now().strftime("%d.%b %Y, %H:%M:%S")
+    return datetime.datetime.now().strftime("%dth, %H:%M:%S")
 
 
 def append_forward_slash_if_needed(dir_path):
