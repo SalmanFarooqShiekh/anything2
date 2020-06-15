@@ -11,37 +11,40 @@ import re
 import os
 
 ###############################################################################################
-# Script Options:
-
-PRINT_TO_PHYSICAL_PRINTER           = False
-PRINT_TO_VIRTUAL_PRINTER            = True
+#################################### Script Options ###########################################
+###############################################################################################
+PRINT_TO_PHYSICAL_PRINTER           = True
+PRINT_TO_VIRTUAL_PRINTER            = False
 PHYSICAL_PRINTER_NAME               = "Ecomm_Fulfillment___Inventory_Cage" # as determined from running 'lpstat -a' in the terminal
 VIRTUAL_PRINTER_NAME                = "q"
 SPLIT_PS_PDF_TARGET                 = os.getcwd() + os.sep + "split_ps_pdf_target/"
 SPLIT_SL_PDF_TARGET                 = os.getcwd() + os.sep + "split_sl_pdf_target/"
 COMBINED_IMGS_TARGET                = os.getcwd() + os.sep + "combined_pages/"
 ###############################################################################################
+###############################################################################################
+###############################################################################################
 
 
+###############################################################################################
+###############################################################################################
+###############################################################################################
 # sample wanted matches: 
 # "111-4979156-8561 860"
 # "112-6411059-1101064"
 # "112-3331 456-7378648"
-OID_LOOKS_LIKE_THIS   = r"(\s*\d){3}-(\s*\d){7}-(\s*\d){7}"
+OID_LOOKS_LIKE_THIS = r"(\s*\d){3}-(\s*\d){7}-(\s*\d){7}"
 PS_PAGES_MATCH_THIS = r"[Oo][Rr][Dd][Ee][Rr][\s]*[Ii][Dd]:[\s]*" + OID_LOOKS_LIKE_THIS
 
-
-def is_ps_page(a_page):
-    img_text = image_to_string(Image.open(a_page))
-    match = re.search(PS_PAGES_MATCH_THIS, img_text)
-
-    return bool(match)
-
+PS_IMG_W, PS_IMG_H = 1700, 2200 # change them if you set something other than the default dpi for PS imgs
+###############################################################################################
+###############################################################################################
+###############################################################################################
 
 def do_amazon_print_job(pdfA, pdfB):
-    print(timestamp() + ": Proccessing: \n>'" + pdfA + "' \nand \n> '" + pdfB + "'", flush=True)
+    log("Proccessing: \n\t>>> '" + pdfA + "' \nand \n\t>>> '" + pdfB + "'") 
+    time.sleep(3)
 
-    empty_or_make_new(SPLIT_PS_PDF_TARGET)    
+    empty_or_make_new(SPLIT_PS_PDF_TARGET)
     empty_or_make_new(SPLIT_SL_PDF_TARGET)
     empty_or_make_new(COMBINED_IMGS_TARGET)
 
@@ -56,14 +59,14 @@ def do_amazon_print_job(pdfA, pdfB):
         ps_path_from_page_num = pdfB_path_from_page_num
         sl_path_from_page_num = pdfA_path_from_page_num
 
-
-    orders_info = get_orders_info(ps_path_from_page_num, sl_path_from_page_num)
+    sl_pdf_path = pdfB if sl_path_from_page_num == pdfB_path_from_page_num else pdfA
+    orders_info = get_orders_info(ps_path_from_page_num, sl_path_from_page_num, sl_pdf_path)
     
     for order in orders_info.values():
         paste_barcodes_on_ps(order["order_id"], order["tracking_number"], order["ps_path"])
 
     for order in orders_info.values():
-        combined_ps_and_sl_path = append_forward_slash_if_needed(COMBINED_IMGS_TARGET) + order["order_id"] + ".png"
+        combined_ps_and_sl_path = append_slash_if_needed(COMBINED_IMGS_TARGET) + order["order_id"] + ".png"
         combine_ps_and_sl(order["ps_path"], order["sl_path"], combined_ps_and_sl_path)
         order["combined_ps_and_sl_path"] = combined_ps_and_sl_path
 
@@ -71,393 +74,278 @@ def do_amazon_print_job(pdfA, pdfB):
         order = orders_info[page_num]
         print_to_LL(order["combined_ps_and_sl_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
         print_to_PP(order["ps_path"], for_real=PRINT_TO_PHYSICAL_PRINTER)
+
+def get_orders_info(ps_path_from_page_num, sl_path_from_page_num, sl_pdf_path):
+    sl_oids  = oids_from_sl(sl_pdf_path)
+    ps_oids  = oids_from_ps(ps_path_from_page_num)
+    sl_tnos  = tnos_from_sl(sl_path_from_page_num)
     
-    print(timestamp() + ": Amazon print job completed", flush=True)
-    print("\n" + timestamp() + ": Ready to receive a new amazon pdf-pair...\n", flush=True)
-
-
-def print_to_PP(path_to_file_to_print, for_real=False):
-    '''
-    PP means Plain Paper, the print media in Tray1 of the printer
-    '''
-
-    if for_real:
-        os.system(r"lpr -P " + PHYSICAL_PRINTER_NAME + " -o BRInputSlot=Tray1 " + path_to_file_to_print)
-    
-    if PRINT_TO_VIRTUAL_PRINTER:
-        os.system(r"lpr -P " + VIRTUAL_PRINTER_NAME + " " + path_to_file_to_print)
-    
-    print("Sending print job to PP/Tray1 done: " + path_to_file_to_print, flush=True)
-
-
-def print_to_LL(path_to_file_to_print, for_real=True):
-    '''
-    LL means Laser Labels, the print media in Tray2 of the printer
-    '''
-
-    if for_real:
-        os.system(r"lpr -P " + PHYSICAL_PRINTER_NAME + " -o BRInputSlot=Tray2 " + path_to_file_to_print)
-    
-    if PRINT_TO_VIRTUAL_PRINTER:
-        os.system(r"lpr -P " + VIRTUAL_PRINTER_NAME + " " + path_to_file_to_print)
-    
-    print("Sending print job to LL/Tray2 done: " + path_to_file_to_print, flush=True)
-
-
-def pdf_to_pages(path_to_pdf, output_dir):
-    # Breaks the pdf at path_to_pdf into individual pdf's each of which contains one page of 
-    # the source pdf, saving each one-page-pdf to output_dir. 
-    #
-    # Returns a dict of size=(number of pages in path_to_pdf) which contains the path to each
-    # one-page-pdf. The keys are integers and values are path strings in the dict. The paths 
-    # in the dict are relative to os.getcwd().
-    # 
-    # Example Usage: 
-    # pages_of_pdf = pdf_to_pages(r"path/to/your.pdf")
-    # page1_path   = pages_of_pdf[1]  # note that indexing of the dict starts from 1 to
-    # page2_path   = pages_of_pdf[2]  # match with indexing of page numbers of the pdf,
-    # page3_path   = pages_of_pdf[3]  # this was the reason a dict was used instead of a list
-    # ...and so on
-    # 
-    # note: faster than pdf_to_images()
-
-
-    output_dir = append_forward_slash_if_needed(output_dir)
-
-    if not os.path.exists(output_dir):
-        raise NotADirectoryError(output_dir)
-
-    # will be populated and returned:
-    paths = dict() 
-
-    # split the pdf:
-    with open(path_to_pdf, "rb") as opened_pdf:
-        reader = PdfFileReader(opened_pdf)
-
-        for i in range(reader.numPages):
-            writer = PdfFileWriter()
-            writer.addPage(reader.getPage(i))
-
-            output_page_path = f"{output_dir}page_{i+1:04}.pdf"
-            with open(output_page_path, "wb") as output_stream:
-                writer.write(output_stream)
-            
-            paths[i+1] = output_page_path
-
-    return paths
-
-
-def pdf_to_images(path_to_pdf, output_dir):
-    '''
-    Breaks the pdf at path_to_pdf into individual images, each of which contains one page of 
-    the source pdf, saving each image/page to output_dir. 
-    
-    Returns a dict of size=(number of pages in path_to_pdf) which contains the path to each
-    one-page-image. The keys are integers and values are path strings. The paths 
-    in the dict are relative to os.getcwd().
-    
-    Example Usage: 
-    pages_of_pdf = pdf_to_images(r"path/to/your.pdf")
-    page1_path   = pages_of_pdf[1]  # note that indexing of the dict starts from 1 to
-    page2_path   = pages_of_pdf[2]  # match with indexing of page numbers of the pdf,
-    page3_path   = pages_of_pdf[3]  # this was the reason a dict was used instead of a list
-    ...and so on
-    '''
-    
-    print(timestamp() + ": Started converting pdf to images.\nPDF: " + path_to_pdf + "\nTO: " + output_dir, flush=True)
-
-    list_of_paths_to_all_pages = convert_from_path(
-        pdf_path=path_to_pdf, 
-        dpi=200, 
-        output_folder=output_dir, 
-        output_file=os.path.basename(path_to_pdf),
-        fmt="png", 
-        thread_count=8,
-        paths_only=True
-    )
-
-    dict_of_paths_to_all_pages = dict() 
-
-    for i in range(len(list_of_paths_to_all_pages)):
-        dict_of_paths_to_all_pages[i+1] = list_of_paths_to_all_pages[i]
-
-
-    print(timestamp() + ": Done converting pdf to images.", flush=True)
-
-    return dict_of_paths_to_all_pages
-
-
-def pdf_to_images2(path_to_pdf, output_dir):
-    '''
-    functionally identical to pdf_to_images(), the difference is just 
-    that the dependency is of pdftoppm instead of pdf2image
-    '''
-
-    print(timestamp() + ": Started converting pdf to images.\nPDF: " + path_to_pdf + "\nTO: " + output_dir, flush=True)
-
-    file_name = str(random.randint(1, 999999999999999999999999999999999))
-    
-    output_dir = append_forward_slash_if_needed(output_dir)
-    command = "pdftoppm -r 200 -png " + path_to_pdf + " " + output_dir + file_name
-    os.system(command)
-    
-    # when `file_name` = "x"
-    # Output images by pdftoppm will be: 
-    #       x-1.png (page_1)
-    #       x-2.png (page_2)
-    #       x-3.png (page_3)
-    #       x-4.png (page_4)
-    #       x-5.png (page_5)
-    #       ... and so on.
-    # 
-    # (for help: consult man pages for pdftoppm)
-
-    dict_of_paths_to_all_pages = dict() 
-
-    files = glob.glob(output_dir + file_name + "*")
-    for file_path in files: 
-        match = re.search(r"-\d+\.png$", file_path)
-
-        if match:
-            matched_string = file_path[ match.start() : match.end() ]
-            
-            m = re.search(r"\d+", matched_string)
-            page_num = int(matched_string[ m.start() : m.end() ])
-            
-            dict_of_paths_to_all_pages[page_num] = file_path
-
-    print(timestamp() + ": Done converting pdf to images.", flush=True)
-
-    return dict_of_paths_to_all_pages
-
-
-def get_orders_info(ps_path_from_page_num, sl_path_from_page_num):
-    # params:
-    #   sl_path_from_page_num: a dict: page_num -> page_img_path
-    #   ps_path_from_page_num: a dict: page_num -> page_img_path
-    # 
-    # returns:
-    #   a dict: order_num -> another_dict where another_dict contains:
-    #       "ps_path"         -> the path to the ps of this order 
-    #       "sl_path"         -> the path to the sl of this order  
-    #       "order_id"        -> the order_id of this order
-    #       "tracking_number" -> the tracking number of the sl of this order
-    #   
-    #   order_num is a lot like page_num, it can be used to retrieve 
-    #   the details about an order from the dict this function returns.
-    
-    print(timestamp() + ": Determining PS-SL matches.", flush=True)
-
-    sl_oids_and_tnums = oids_and_tnums_from_sl_pages(sl_path_from_page_num)
-
-    ps_oids  = oids_from_ps_pages(ps_path_from_page_num)
-    sl_oids  = sl_oids_and_tnums[0]
-    sl_tnums = sl_oids_and_tnums[1]
-    
-    # can be sl_oids.keys() too, they should be identical disregarding order. 
-    # TODO: raise an exception if this is not the case^
+    # can be sl_oids.keys() too, they should be identical disregarding order, the spec says so 
+    # TODO: raise a sensible exception if this is not the case^
     ps_page_nums = ps_oids.keys() 
     
     result = dict()
     for ps_page_num in sorted(ps_page_nums):
         ps_oid = ps_oids[ps_page_num]
         matching_sl_page_num = k_from_v(sl_oids, ps_oid)
-        sl_tnum = sl_tnums[matching_sl_page_num]
+        sl_tno = sl_tnos[matching_sl_page_num]
         result[ps_page_num] = {
             "ps_path": ps_path_from_page_num[ps_page_num], 
             "sl_path": sl_path_from_page_num[matching_sl_page_num], 
             "order_id": ps_oid, 
-            "tracking_number": sl_tnum
+            "tracking_number": sl_tno
         }
-
-        msg = ": PS-SL match " + str(ps_page_num) + " details:\n" + "\n".join("> "+str(i) for i in result[ps_page_num].items())
-        print(timestamp() + msg, flush=True)    
-
-    print(timestamp() + ": Above PS-SL matches determined.", flush=True)
+        msg = "PS-SL matches " + str(ps_page_num) + " details:" \
+            + "\n        ps_path: " + os.path.basename(result[ps_page_num]["ps_path"]) \
+            + "\n        sl_path: " + os.path.basename(result[ps_page_num]["sl_path"]) \
+            + "\n       order_id: " + result[ps_page_num]["order_id"] \
+            + "\ntracking_number: " + result[ps_page_num]["tracking_number"]
+        log(msg)
 
     return result
 
+def pdf_to_images2(path_to_pdf, output_dir, dpi=200, range=None):
+    log("Started converting pdf to images.\n\t>>> Source PDF: " + path_to_pdf + "\n\t>>> Desti. dir: " + output_dir)
 
-def k_from_v(src_dict, v_to_find):
-    for k, v in src_dict.items():
-        if v == v_to_find:
-            return k
-
-    raise ValueError("could not find the given value in the given dict")
-
-
-def extract_oid_from_ps_img(ps_img_path):
-    '''
-    extracts the order_id (oid) from the given packing_slip through OCR
-    '''
-
-    img_text = image_to_string(Image.open(ps_img_path))
-
-    # desired sample match: "Order ID: 113-2705349-0340212"
-    pattern = PS_PAGES_MATCH_THIS
-    match = re.search(pattern, img_text)
-    order_id_string = img_text[ match.start() : match.end() ]
-    # order_id_string = order_id_string.replace("-", "")
-    order_id_string = order_id_string[-19:]
-    # order_id_number = int(order_id_string)
+    file_name = str(random.randint(1, 9999999999999999999999))
     
-    print(timestamp() + ": Extracted an order_ID from a PS: " + order_id_string, flush=True)
-    return order_id_string
+    output_dir = append_slash_if_needed(output_dir)
+    r = " -f " + str(range[0]) + " -l " + str(range[1]) + " " if bool(range) else " "
+    command = "pdftoppm" + r + "-r " + str(dpi) + " -png " + path_to_pdf + " " + output_dir + file_name  #consult man pages for pdftoppm for help
+    os.system(command)
+    
+
+    dict_of_paths_to_all_pages = dict() 
+    for f in sorted(glob.glob(output_dir + file_name + "*")): 
+        match = re.search(r"-\d+\.png$", f)
+
+        if match:
+            matched_string = f[ match.start() : match.end() ]
+            
+            m = re.search(r"\d+", matched_string)
+            page_num = int(matched_string[ m.start() : m.end() ])
+            
+            dict_of_paths_to_all_pages[page_num] = f
+
+    log("Done converting pdf to images.")
+
+    return dict_of_paths_to_all_pages
+
+#########################################################################################
+############################## PS RELATED FUNCTIONS #####################################
+#########################################################################################
+
+def oids_from_ps(path_from_page_num):
+    result = dict()
+    for pnum, path in path_from_page_num.items():
+        img_text = image_to_string(Image.open(path))
+        m = re.search(PS_PAGES_MATCH_THIS, img_text)
+        order_id_string = img_text[ m.start() : m.end() ]
+        order_id_string = order_id_string[-19:]
+        result[pnum] = order_id_string
+        
+        log("Extracted an order_ID from a  PS: " + order_id_string)
+
+    return result
+
+#########################################################################################
+############################## PS RELATED FUNCTIONS END #################################
+#########################################################################################
+
+# <-----------------------------------------------------------------------------------> #
+
+#########################################################################################
+############################## SL RELATED FUNCTIONS #####################################
+#########################################################################################
+
+def oids_from_sl(sl_pdf_path):
+    def extr_oids_from_oid_pages(oid_pages_paths_list):
+        oid_pages_text_list = list()
+        for page_path in oid_pages_paths_list:
+            oid_pages_text_list.append(str_from_img(page_path))
+        
+        oid_pages_text = "\n".join(oid_pages_text_list)
+        oid_pages_lines = [line for line in oid_pages_text.split('\n') if line.strip() != ''] #removes blank lines
+        oid_pages_lines.pop(0) #first line is always something we don't need
+        raw_oids = oid_pages_lines
+
+        result = dict()
+        p = r"(\s*/*\d\s*){2,4}-(\s*/*\d\s*){6,8}-(\s*/*\d\s*){6,8}" #just don't touch it
+        for i in range(len(raw_oids)):
+            pnum = i + 1
+            raw_oid_text = raw_oids[i]
+            
+            match = re.search(pattern=p, string=raw_oid_text)
+            if bool(match):
+                oid_str = raw_oid_text[ match.start() : match.end() ]
+                oid_str = oid_str.replace(" ", "")
+                oid_str = oid_str.replace("/", "")
+                result[pnum] = oid_str
+            else:
+                result[pnum] = raw_oid_text
+            
+            log("Extracted an order_ID from an SL: " + oid_str)
+        
+        return result
 
 
-def oids_from_ps_pages(ps_path_from_page_num):
-    # param: ps_path_from_page_num should be a dict containing the path to images of all packing_slips with 
-    # the keys being the page_number
-    # 
-    # returns: a dict() with a mapping from the page_number to the order_id of packing_slips.
-    # note: page_numbers start at 1
+    WORKING_DIR = "temp3310123blahblahblahblehblehbleh/" # slash at end is important
+    
+    os.system("rm -r " + WORKING_DIR)
+    os.mkdir(WORKING_DIR)
+    
+    sl_path_from_page_num = pdf_to_images2(sl_pdf_path, WORKING_DIR, dpi=150)
+    total_pages_count     = len(sl_path_from_page_num)
+    reverse_paths         = [ sl_path_from_page_num[p] for p in sorted(sl_path_from_page_num.keys(), reverse=True) ]
+    
 
+    oid_pages_count = 0
+    for path in reverse_paths:
+        last_page_text = str_from_img(path)
+        if is_oid_page_text(last_page_text):
+            oid_pages_count += 1
+        else:
+            break
+        
+    dpi_list = list()
+    for dpi in range(150, 601, 50):
+        dpi_dir = WORKING_DIR + str(dpi) + "/"
+        os.mkdir(dpi_dir)
+        
+        oid_page_num_range = (total_pages_count - oid_pages_count + 1), total_pages_count
+        d = pdf_to_images2(sl_pdf_path, dpi_dir, dpi=dpi, range=oid_page_num_range)
+        
+        dpi_list.append(list(d.values()))
+
+    
+    dpi_list2 = list()
+    for oid_pages in dpi_list:
+        dpi_list2.append(extr_oids_from_oid_pages(oid_pages))
+
+    
+    page_to_frequencies = dict()
+    for p in range(1, total_pages_count - oid_pages_count + 1):
+        frequencies = dict()
+        for d in dpi_list2:
+            recognized = d[p]
+            if recognized in frequencies.keys():
+                frequencies[recognized] += 1
+            else:
+                frequencies[recognized] = 1
+
+        page_to_frequencies[p] = frequencies 
+    
 
     result = dict()
-    for current_page_num in ps_path_from_page_num.keys():
-        current_page_img_path = ps_path_from_page_num[current_page_num]
-        result[current_page_num] = extract_oid_from_ps_img(current_page_img_path)
+    for p in range(1, total_pages_count - oid_pages_count + 1):
+        frequencies = page_to_frequencies[p]
+        most_frequent_oid = k_from_v(frequencies, max(frequencies.values()))
+        result[p] = str(most_frequent_oid)
+
+    # for k, v in result.items():
+    #     print(k, "->", v)
+
+
+    os.system("rm -r " + WORKING_DIR)
 
     return result
-
-
-def oids_and_tnums_from_sl_pages(sl_path_from_page_num):
-    # param: sl_path_from_page_num should be a dict() containing the path to images of all shipping_labels with
-    # the keys being the page_number
-    # 
-    # returns: a tuple of 2 dicts: 
-    # 1st one is a dict() with a mapping from the page_number to the order_id of shipping_labels.
-    # 2nd one is a dict() with a mapping from the page_number to the tracking_number of shipping_labels.
-    # note: page_numbers start at 1
-
-    print(timestamp() + ": Extracting order_IDs and tracking_numbers from SL's.", flush=True)
-
-    all_pages = all_pages_text(sl_path_from_page_num)
-    oid_pages = extract_oid_pages_text_from_sl_pages(all_pages)
-    oids  = extract_oids_from_sl_oid_pages(oid_pages)
     
-    # remove all the "orderID page"s:
-    total_page_count = len(sl_path_from_page_num)
-    for i in range(len(oid_pages)):
-        sl_path_from_page_num.pop(total_page_count - i)
-        all_pages.pop()
 
-    result1 = dict()
-    result2 = dict()
-    for page_num in sl_path_from_page_num.keys():
-        corresponding_list_index = page_num - 1
-        current_page_text = all_pages[corresponding_list_index]
-        result1[page_num] = oids[corresponding_list_index]
-        result2[page_num] = extract_tnum_from_sl_text(current_page_text)
-
-    return result1, result2
-
-
-def extract_tnum_from_sl_text(sl_page_text):
-    # sample intended match: "TRK# 3933 7813 1941"
-    match1 = re.search(pattern=r"TRK.{1,4}[\d]{4}[\s]{0,2}[\d]{4}[\s]{0,2}[\d]{4}", string=sl_page_text)
-    
-    # sample intended match: "TRACKING #: 1Z O9A Y33 03 9278 4049"
-    # sample intended match: "TRACKING #: 1Z 09A Y33 03 9278 4049", notice that the OCR can mistakenly recognize 0 as O and vice versa
-    match2 = re.search(pattern=r"TRACKING[\s]{0,2}#:[\s]{0,2}[\w]{2}[\s]{0,2}[\w]{3}[\s]{0,2}[\w]{3}[\s]{0,2}[\w]{2}[\s]{0,2}[\d]{4}[\s]{0,2}[\d]{4}", string=sl_page_text)
-
-    # sample intended match: "USPS TRACKING # EP\n\n9305 5201 1140 4895 5861 69"
-    # sample intended match: "USPS TRACKING # EP\n\nil il\n\n9305 5201 1140 4895 5861 69"
-    match3 = re.search(pattern=r"USPS[\s]{0,2}TRACKING[\s]{0,2}#.*(\s*\d){22}", string=sl_page_text, flags=re.S)
-    
-    if match1:
-        tnum_string = sl_page_text[ match1.start() : match1.end() ]
-        tnum_string = "".join(re.split(r"\s+", tnum_string)) # removes all whitespace matched by \s
-        tnum_string = tnum_string[-12:]
-    elif match2:
-        tnum_string = sl_page_text[ match2.start() : match2.end() ]
-        tnum_string = "".join(re.split(r"\s+", tnum_string)) # removes all whitespace matched by \s
-        tnum_string = tnum_string[-18:]
-        tnum_string = tnum_string.replace("1ZO9A", "1Z09A")
-    elif match3:
-        tnum_string = sl_page_text[ match3.start() : match3.end() ]
-        m = re.search(pattern=r"(\s*\d){22}", string=tnum_string)
-        tnum_string = tnum_string[ m.start() : m.end() ] 
-        tnum_string = "".join(re.split(r"\s+", tnum_string)) # removes all whitespace matched by \s
+def tnos_from_sl(sl_path_from_page_num):
+    def extr_tno_from_sl(sl_page_text):
+        # sample intended match: "TRK# 3933 7813 1941"
+        match1 = re.search(pattern=r"TRK.{1,4}[\d]{4}[\s]{0,2}[\d]{4}[\s]{0,2}[\d]{4}", string=sl_page_text)
         
-    
-    print(timestamp() + ": Extracted a tnum from an SL: " + tnum_string, flush=True)
-    return tnum_string    
-    
-    raise Exception("Couldn't extract the tracking number from the following shipping label: \
-                    \n--------------------\n" + sl_page_text + "\n--------------------\n")
-    
+        # sample intended match: "TRACKING #: 1Z O9A Y33 03 9278 4049"
+        # sample intended match: "TRACKING #: 1Z 09A Y33 03 9278 4049", notice that the OCR can mistakenly recognize 0 as O and vice versa
+        match2 = re.search(pattern=r"TRACKING[\s]{0,2}#:[\s]{0,2}[\w]{2}[\s]{0,2}[\w]{3}[\s]{0,2}[\w]{3}[\s]{0,2}[\w]{2}[\s]{0,2}[\d]{4}[\s]{0,2}[\d]{4}", string=sl_page_text)
 
-def extract_oid_pages_text_from_sl_pages(all_pages_text):
-    # params: all_pages_text: a list of page_text of each page sorted on page_num
-    # 
-    # returns: returns a list whose each item is the text of an "orderID page". 
-    # The order of items in this list is the order in which they appear in all_pages_text
-    # 
-    # An "orderID page" is a page at the end of the Shipping Labels PDF which tells us 
-    # which sl has what orderID. There can be more than one of them.
+        # sample intended match: "USPS TRACKING # EP\n\n9305 5201 1140 4895 5861 69"
+        # sample intended match: "USPS TRACKING # EP\n\nil il\n\n9305 5201 1140 4895 5861 69"
+        match3 = re.search(pattern=r"USPS[\s]{0,2}TRACKING[\s]{0,2}#.*(\s*\d){22}", string=sl_page_text, flags=re.S)
+        
+        if match1:
+            tno = sl_page_text[ match1.start() : match1.end() ]
+            tno = "".join(re.split(r"\s+", tno)) # removes all whitespace matched by \s
+            tno = tno[-12:]
+        elif match2:
+            tno = sl_page_text[ match2.start() : match2.end() ]
+            tno = "".join(re.split(r"\s+", tno))
+            tno = tno[-18:]
+            tno = tno.replace("1ZO9A", "1Z09A")
+        elif match3:
+            tno = sl_page_text[ match3.start() : match3.end() ]
+            m = re.search(pattern=r"(\s*\d){22}", string=tno)
+            tno = tno[ m.start() : m.end() ] 
+            tno = "".join(re.split(r"\s+", tno))
+            
+        
+        log("Extracted a  tno      from an SL: " + tno)
+        return tno    
+        
+        raise Exception("Couldn't extract the tracking number from the following shipping label: \
+                        \n--------------------\n" + sl_page_text + "\n--------------------\n")
 
-
-    def is_oid_page_text(page_text):
-        return re.search(pattern=OID_LOOKS_LIKE_THIS, string=page_text) != None
-    
-    result = list()
-    for page_text in all_pages_text:
-        if is_oid_page_text(page_text):
-            result.append(page_text)
-
-    return result
-
-
-def all_pages_text(path_from_page_num):
-    # param: sl_path_from_page_num should be a dict() containing (the path to images of all shipping_labels)
-    # as values with the keys being page_numbers
-    # 
-    # returns: a list of page_text of each page sorted on page_num
-
-    sorted_page_nums = sorted(path_from_page_num.keys())
-
-    result = list()
-    for pnum in sorted_page_nums:
-        img_text = str_from_img(path_from_page_num[pnum])
-        result.append(img_text)
+    result = dict()
+    for pno, thetext in all_pages_text(sl_path_from_page_num).items():
+        if not is_oid_page_text(thetext):
+            result[pno] = extr_tno_from_sl(thetext)
 
     return result
+    
 
 
-def extract_oids_from_sl_oid_pages(oid_page_text_list):
-    # params: oid_page_text_list: a list in which each item is the text of an "orderID page"
-    # 
-    # returns: extracts the "orderID"s from all the text in the oid_page_text_list 
-    # and returns a list of "orderID" ints
+#########################################################################################
+############################## SL RELATED FUNCTIONS END #################################
+#########################################################################################
 
-    print(timestamp() + ": Extracting order_ID's from SL's.", flush=True)
-
-    result = list()
-    for oid_page_text in oid_page_text_list:
-        for match in re.finditer(pattern=OID_LOOKS_LIKE_THIS, string=oid_page_text):
-            oid_str = oid_page_text[ match.start() : match.end() ]
-            # oid_str = oid_str.replace("-", "")
-            oid_str = oid_str.replace(" ", "")
-            result.append(oid_str)
-
-    print(timestamp() + ": Done. Extracted order_ID's from SL's:\n> " + "\n> ".join(result), flush=True)
-
-    return result
+# <-----------------------------------------------------------------------------------> #
 
 
-def empty_dir(dir_path):
-    # deletes all contents of the given directory
 
-    dir_path = append_forward_slash_if_needed(dir_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+######################################################################################################################
+######################################################################################################################
+################################ Function likely to not not throw errors #############################################
+######################################################################################################################
+######################################################################################################################
+
+
+def is_oid_page_text(page_text):
+    return re.search(pattern=OID_LOOKS_LIKE_THIS, string=page_text) != None
+
+def is_ps_page(a_page):
+    img_text = str_from_img(a_page)
+    match = re.search(PS_PAGES_MATCH_THIS, img_text)
+
+    return bool(match)
+
+def empty_dir(dir_path, *whitelist):
+    log("Emptiying dir at: " + dir_path + ( "\nexcept: " + ", ".join(whitelist) if len(whitelist) else "" ))
+
+    dir_path = append_slash_if_needed(dir_path)
     files = glob.glob(dir_path + "*")
+    
+    for i in whitelist:
+        files.remove(i)
+        
     for file in files:
         os.remove(file)
 
-
 def str_from_img(img_path):
     return image_to_string(Image.open(img_path))
-
 
 def display_alert(msg, blocking):
     # it will be a little better if this is passed rstrings
@@ -465,14 +353,12 @@ def display_alert(msg, blocking):
 
     os.system(r'osascript -e "display alert \"' + msg + r'\""' + ('' if blocking else ' &'))
 
-
 def timestamp():
     # returns a timestamp of the current local time as a string
 
     return datetime.datetime.now().strftime("%dth, %H:%M:%S")
 
-
-def append_forward_slash_if_needed(dir_path):
+def append_slash_if_needed(dir_path):
     # add a forward slash at the end of a path string if it isn't already there.
 
 
@@ -483,7 +369,6 @@ def append_forward_slash_if_needed(dir_path):
     
     return dir_path + append
 
-
 def dir_len(dir_path):
     # return the number of non-hidden files in the given directory
 
@@ -492,15 +377,10 @@ def dir_len(dir_path):
     non_hidden_items = list(filter((lambda item_name: item_name[0] != "."), all_items))
     return len(non_hidden_items)
 
-
-def paste(
-back, 
-front1, 
-front2, 
-front1_pos=(0, 0), 
-front2_pos=(0, 0), 
-scale_front1_size=1,
-scale_front2_size=1, 
+def paste( back, 
+front1, front2, 
+front1_pos, front2_pos,
+scale_front1_size, scale_front2_size, 
 result_path=None
 ):
     '''
@@ -543,57 +423,56 @@ result_path=None
     f2.close()
 
 
-def paste_barcodes_on_ps(oid, tnum, on, result=None):
+def paste_barcodes_on_ps(oid, tno, on, result=None):
     '''
-    oid          : the  oid from which to generate the upper-right barcode 
-    tnum         : the tnum from which to generate the   bottom    barcode 
+    oid          : the oid from which to generate the upper-right barcode 
+    tno          : the tno from which to generate the   bottom    barcode 
     on           : the path to the image on which the generated barcode will be pasted
     result       : the path to the new image, if None the source image will be overwritten
     '''
 
-    print(timestamp() + ": Pasting barcodes for oid: " + str(oid) + " and tnum: " + str(tnum) + " on: " + str(on), flush=True)
+    log("Pasting barcodes for oid: " + str(oid) + " and tno: " + str(tno) + " on: " + os.path.basename(on))
 
-    oid_pos  = (1050,40)
+    oid_pos  = (
+        int(0.61 * PS_IMG_W),
+        int(0.01 * PS_IMG_H)
+    )
     oid_scale_by = 1
     
-    tnum_pos = (560,1680)
-    tnum_scale_by = 1.8
+    tno_pos = (
+        int(0.33 * PS_IMG_W),
+        int(0.76 * PS_IMG_H)
+    )
+    tno_scale_by = 1.8
 
     b1 = barcode.get("code128", oid, writer=barcode.writer.ImageWriter())
     oid_barcode = b1.save("1_a_uniquely_named_temp_file_which_won't_conflit_with_anything_else_FDAKJHFIUHIBCHEFDACN")
     
-    b2 = barcode.get("code128", tnum, writer=barcode.writer.ImageWriter())
-    tnum_barcode = b2.save("2_a_uniquely_named_temp_file_which_won't_conflit_with_anything_else_FDAKJHFIUHIBCHEFDACN")
+    b2 = barcode.get("code128", tno, writer=barcode.writer.ImageWriter())
+    tno_barcode = b2.save("2_a_uniquely_named_temp_file_which_won't_conflit_with_anything_else_FDAKJHFIUHIBCHEFDACN")
 
     paste(
         back=on,
         front1=oid_barcode,
-        front2=tnum_barcode,
+        front2=tno_barcode,
         front1_pos=oid_pos, 
-        front2_pos=tnum_pos, 
+        front2_pos=tno_pos, 
         scale_front1_size=oid_scale_by,
-        scale_front2_size=tnum_scale_by, 
+        scale_front2_size=tno_scale_by, 
         result_path=(on if result == None else result)
     )
 
     os.remove(oid_barcode)
-    os.remove(tnum_barcode)
+    os.remove(tno_barcode)
 
-    print(timestamp() + ": Done", flush=True)
+    log("Done")
 
 def empty_or_make_new(dir_path):
-    '''
-    creates a new at dir_path if it doesn't exist, empties it otherwise, you 
-    get a clean empty dir at dir_path either way
-    '''
-
     if os.path.exists(dir_path) and os.path.isdir(dir_path):
         empty_dir(dir_path)
-        print(timestamp() + ": Emptied dir at: " + dir_path, flush=True)
     else:
         os.mkdir(dir_path)
-        print(timestamp() + ": Made dir at: " + dir_path, flush=True)
-
+        log("Made dir at: " + dir_path)
 
 def combine_ps_and_sl(ps_path, sl_path, output):
     '''
@@ -601,12 +480,17 @@ def combine_ps_and_sl(ps_path, sl_path, output):
     left half of it and the image at `sl_path` on the right half of it
     '''
     
-    print(timestamp() + ": Making a single page \nfrom: " + ps_path + " \nand: " + sl_path + " \nat: " + output, flush=True)
+    log(
+        "Making a single page \n\tfrom: " \
+        + os.path.basename(ps_path) \
+        + "\n\t and: " + os.path.basename(sl_path) \
+        + "\n\t  at: " + os.path.basename(output)
+    )
 
     IMG2_HORIZONTAL_OFFSET = 50
     
-    ps = Image.open(ps_path) # 1700 x 2200
-    sl = Image.open(sl_path) #  800 x 1200
+    ps = Image.open(ps_path)
+    sl = Image.open(sl_path)
 
     # make height of sl equal to the height of ps while sl maintains its original aspect ratio
     scaling_needed = ps.height / sl.height 
@@ -624,4 +508,83 @@ def combine_ps_and_sl(ps_path, sl_path, output):
     sl.close()
     canvas.close()
 
-    print(timestamp() + ": Done", flush=True)
+    log("Done")
+
+def print_to_PP(path_to_file_to_print, for_real=False):
+    if for_real:
+        os.system(r"lpr -P " + PHYSICAL_PRINTER_NAME + " -o BRInputSlot=Tray1 " + path_to_file_to_print)
+    
+    if PRINT_TO_VIRTUAL_PRINTER:
+        os.system(r"lpr -P " + VIRTUAL_PRINTER_NAME + " " + path_to_file_to_print)
+    
+    log("Sending print job to PP/Tray1 done: " + os.path.basename(path_to_file_to_print))
+
+def print_to_LL(path_to_file_to_print, for_real=True):
+    if for_real:
+        os.system(r"lpr -P " + PHYSICAL_PRINTER_NAME + " -o BRInputSlot=Tray2 " + path_to_file_to_print)
+    
+    if PRINT_TO_VIRTUAL_PRINTER:
+        os.system(r"lpr -P " + VIRTUAL_PRINTER_NAME + " " + path_to_file_to_print)
+    
+    log("Sending print job to LL/Tray2 done: " + os.path.basename(path_to_file_to_print))
+
+def pdf_to_images(path_to_pdf, output_dir):
+    '''
+    Breaks the pdf at path_to_pdf into individual images, each of which contains one page of 
+    the source pdf, saving each image/page to output_dir. 
+    
+    Returns a dict of size=(number of pages in path_to_pdf) which contains the path to each
+    one-page-image. The keys are integers and values are path strings. The paths 
+    in the dict are relative to os.getcwd().
+    
+    Example Usage: 
+    pages_of_pdf = pdf_to_images(r"path/to/your.pdf")
+    page1_path   = pages_of_pdf[1]  # note that indexing of the dict starts from 1 to
+    page2_path   = pages_of_pdf[2]  # match with indexing of page numbers of the pdf,
+    page3_path   = pages_of_pdf[3]  # this was the reason a dict was used instead of a list
+    ...and so on
+    '''
+    
+    log("Started converting pdf to images.\n>>> Source PDF: " + path_to_pdf + "\n>>> Dest. dir: " + output_dir)
+
+    list_of_paths_to_all_pages = convert_from_path(
+        pdf_path=path_to_pdf, 
+        dpi=200, 
+        output_folder=output_dir, 
+        output_file=os.path.basename(path_to_pdf),
+        fmt="png", 
+        thread_count=8,
+        paths_only=True
+    )
+
+    dict_of_paths_to_all_pages = dict() 
+
+    for i in range(len(list_of_paths_to_all_pages)):
+        dict_of_paths_to_all_pages[i+1] = list_of_paths_to_all_pages[i]
+
+
+    log("Done converting pdf to images.\n")
+
+    return dict_of_paths_to_all_pages
+
+def all_pages_text(path_from_page_num):
+    result = dict()
+    for pnum, path in path_from_page_num.items():
+        result[pnum] = str_from_img(path)
+    return result
+
+def k_from_v(src_dict, v_to_find):
+    for k, v in src_dict.items():
+        if v == v_to_find:
+            return k
+
+    raise ValueError("could not find the given value: " + str(v_to_find) + " in the given dict: " + str(src_dict))
+
+def log(msg):
+    print(timestamp() + ": " + msg, flush=True)
+
+######################################################################################################################
+######################################################################################################################
+############################## Function likely to not not throw errors END ###########################################
+######################################################################################################################
+######################################################################################################################

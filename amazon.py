@@ -1,5 +1,3 @@
-# lpr -P a resources/amazon/1ps.pdf;  lpr -P a resources/amazon/1sl.pdf
-
 import utilities as u
 import datetime
 import time
@@ -24,16 +22,15 @@ from watchdog.observers import Observer
 ###############################################################################################
 # Script Options:
 
-USE_LOG_FILE                        = False # if False, print log to the the stdout which is the terminal usually
-LOG_FILE_PATH                       = os.getcwd() + os.sep + __file__ + ".log"
-AMAZON_VP_DESTINATION_FOLDER        = os.getcwd() + os.sep + "amazon_virtual_printer_target/"  # '/' at the end is important
-WAIT_TIME_FOR_2ND_PDF               = 180 # in seconds
+USE_LOG_FILE                              = False # if False, print log to the the stdout which is the terminal usually
+LOG_FILE_PATH                             = os.getcwd() + os.sep + __file__ + ".log"
+AMAZON_VP_DESTINATION_FOLDER              = os.getcwd() + os.sep + "amazon_virtual_printer_target/"  # '/' at the end is important
+WAIT_TIME_FOR_2ND_PDF                     = 240 # in seconds
+WAIT_TIME_FOR_LETTING_FILES_TRANSER_FULLY = 10
 ###############################################################################################
-
 
 if USE_LOG_FILE:
     sys.stdout = open(LOG_FILE_PATH, "at")
-
 
 
 class AmazonWatcher:
@@ -48,67 +45,61 @@ class AmazonWatcher:
             msg = "Set the folder where the amazon_system's Virtual Printer is saving the PDFs to: '" + AMAZON_VP_DESTINATION_FOLDER + "'"
             u.display_alert(msg, blocking=True)
             
-
         self.observer.schedule(AmazonPDFHandler(), AMAZON_VP_DESTINATION_FOLDER)
         self.observer.start()
-        print("\n" + u.timestamp() + ": Ready to receive a new amazon pdf-pair...\n", flush=True)
+        u.log("Ready to receive a new amazon pdf-pair.\n\n")
 
-        # The observer will keep observing in its own thread.
-        # We are artificially keepthing this main thread alive 
-        # because if it finishes execution, python will kill all 
-        # its child threads too, which includes the observer threads.
-        # We just want this main thread to be alive through any means.
         try:
             while True:
                 time.sleep(5)
         except KeyboardInterrupt:
-            print(u.timestamp() + ": Closing all threads, please wait...", flush=True)
+            u.log("Closing all threads, please wait...")
             self.observer.stop()
             self.observer.join()
-            print(u.timestamp() + ": Done", flush=True)
+            u.log("Done")
         except:
-            print(u.timestamp() + ": An error occured while running: " + __file__, flush=True)
+            u.log("An error occured while running: " + __file__)
             u.display_alert(r"An error occured while running: " + __file__, blocking=False)
             self.observer.stop()
             self.observer.join()
 
 
 class AmazonPDFHandler(FileSystemEventHandler):
-    ps_pdf_receive_time = None  # seconds since epoch
+    ps_pdf_receive_time = None 
     ps_pdf_path = None
 
     @staticmethod
     def on_created(event):
         path_to_source_pdf = event.src_path
-        print(u.timestamp() + ": Started receiving Amazon-PDF: '" + path_to_source_pdf + "'", flush=True)
+        u.log("Started receiving Amazon-PDF: '" + path_to_source_pdf + "'")
 
         if u.dir_len(AMAZON_VP_DESTINATION_FOLDER) == 1:
-            # received file is the 1st pdf of an amazon pdf-pair and will be treated as the ps_pdf
-            AmazonPDFHandler.ps_pdf_receive_time = int(time.time()) # seconds since epoch
+            AmazonPDFHandler.ps_pdf_receive_time = int(time.time())
             AmazonPDFHandler.ps_pdf_path = path_to_source_pdf
         elif u.dir_len(AMAZON_VP_DESTINATION_FOLDER) == 2:
             seconds_since_epoch = int(time.time())
 
             if seconds_since_epoch - AmazonPDFHandler.ps_pdf_receive_time <= WAIT_TIME_FOR_2ND_PDF: # the 2nd pdf came under time, treat it as the sl_pdf
-                sl_pdf_path = path_to_source_pdf
-                u.do_amazon_print_job(AmazonPDFHandler.ps_pdf_path, sl_pdf_path)
-                u.empty_or_make_new(AMAZON_VP_DESTINATION_FOLDER)
-            else: # the 2nd pdf did NOT come under time, treat the 2nd pdf as ps_pdf and delete everything else
-                # delete everything but the pdf just received:
-                dir_items = glob.glob(AMAZON_VP_DESTINATION_FOLDER + "*")
-                dir_items.remove(path_to_source_pdf)
-                for item in dir_items:
-                    os.remove(item)
+                time.sleep(WAIT_TIME_FOR_LETTING_FILES_TRANSER_FULLY)
                 
-                AmazonPDFHandler.ps_pdf_path = path_to_source_pdf  # treat it as the first pdf/ps_pdf of the complete pair
-                AmazonPDFHandler.ps_pdf_receive_time = time.time() # seconds since epoch
+                u.do_amazon_print_job(AmazonPDFHandler.ps_pdf_path, path_to_source_pdf)
+                
+                u.empty_or_make_new(AMAZON_VP_DESTINATION_FOLDER)
+                u.log("Amazon print job completed")
+                u.log("Ready to receive a new amazon pdf-pair.\n\n")
+            else: # the 2nd pdf did NOT come under time, treat the 2nd pdf as ps_pdf and delete everything else
+                u.empty_dir(AMAZON_VP_DESTINATION_FOLDER, path_to_source_pdf)
+                
+                AmazonPDFHandler.ps_pdf_path = path_to_source_pdf  # treat it as the first pdf of the complete pair
+                AmazonPDFHandler.ps_pdf_receive_time = time.time()
         else:
-            print(u.timestamp() + ": Something unexpected happened. Cleaning " + AMAZON_VP_DESTINATION_FOLDER, flush=True)
+            u.log("More than 2 files detected in " + AMAZON_VP_DESTINATION_FOLDER)
+            time.sleep(WAIT_TIME_FOR_LETTING_FILES_TRANSER_FULLY)
             u.empty_dir(AMAZON_VP_DESTINATION_FOLDER)
 
         
 if __name__ == '__main__':
-    print("\n\n" + u.timestamp() + ": " + __file__ + " started", flush=True)
+    u.log(__file__ + " started")
     
     w = AmazonWatcher()
     w.start()
